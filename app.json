@@ -1,13 +1,17 @@
 {
   "expo": {
-    "name": "clarity",
+    "name": "Clarity",
     "slug": "clarity",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Clarity uses the camera to scan receipts and bills.",
+        "NSPhotoLibraryUsageDescription": "Clarity accesses photos to import receipt images."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -20,6 +24,13 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-status-bar",
+      "expo-sharing",
+      "expo-camera",
+      "expo-image-picker"
+    ]
   }
 }
