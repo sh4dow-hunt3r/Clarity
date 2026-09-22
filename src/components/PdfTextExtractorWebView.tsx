@@ -122,7 +122,12 @@ const PdfTextExtractorWebView = forwardRef<PdfTextExtractorHandle>((_props, ref)
       <WebView
         ref={webviewRef}
         originWhitelist={['*']}
-        source={{ html: PDF_EXTRACTOR_HTML }}
+        // A raw HTML string with no baseUrl loads at a restricted "null"
+        // origin on some devices, which blocks fetching external scripts
+        // (like pdf.js from a CDN). Giving it a real https origin fixes that.
+        source={{ html: PDF_EXTRACTOR_HTML, baseUrl: 'https://localhost/' }}
+        mixedContentMode="always"
+        javaScriptEnabled
         onMessage={(event) => {
           let payload: any;
           try {
