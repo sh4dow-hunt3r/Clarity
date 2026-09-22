@@ -18,8 +18,9 @@ import {
   KNOWN_SHOPS, KnownShop, ICON_CHOICES, COLOR_CHOICES,
 } from '../types';
 import { parseReceiptText, parseCsvStatement, parsePdfStatementText } from '../utils/statementParser';
-import { extractPdfText } from '../utils/pdfParser';
 import { pickFileWeb, readFileAsText, readFileAsBase64 } from '../utils/webFilePicker';
+// pdfjs-dist is browser-only — its module-level code crashes native (Hermes) the
+// instant it's imported, so it's loaded lazily and only on the web platform.
 import { useCategories } from '../hooks/useCategories';
 
 const FOOD_SUBCATS: { key: FoodSubcategory; label: string }[] = [
@@ -168,6 +169,7 @@ export default function AddTransactionScreen() {
         isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
         if (isPdf) {
           setImporting(true);
+          const { extractPdfText } = await import('../utils/pdfParser');
           const base64 = await readFileAsBase64(file);
           const text = await extractPdfText(base64);
           parsed = parsePdfStatementText(text);
@@ -185,10 +187,13 @@ export default function AddTransactionScreen() {
         isPdf = file.mimeType === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf');
 
         if (isPdf) {
-          setImporting(true);
-          const base64 = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.Base64 });
-          const text = await extractPdfText(base64);
-          parsed = parsePdfStatementText(text);
+          // pdfjs-dist (used for text extraction) is browser-only — PDF import
+          // on iOS/Android isn't wired up yet, so point the user at CSV for now.
+          showAlert(
+            'PDF import not available here',
+            "PDF statement import currently only works in the web preview. On your phone, please use a CSV export from your bank, or enter transactions manually.",
+          );
+          return;
         } else {
           const text = await FileSystem.readAsStringAsync(file.uri);
           parsed = parseCsvStatement(text);
