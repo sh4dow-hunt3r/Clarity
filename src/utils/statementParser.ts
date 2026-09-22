@@ -13,11 +13,11 @@ export interface ParsedTransaction {
 // be recategorized manually to a custom category afterward.
 const CATEGORY_KEYWORDS: Record<string, string[]> = {
   food: ['grocery', 'grocer', 'market', 'food', 'restaurant', 'cafe', 'coffee', 'pizza',
-         'burger', 'sushi', 'costco', 'walmart', 'safeway', 'kroger', 'whole foods',
-         'trader joe', 'desi mandi', 'fresh', 'bakery', 'deli'],
+         'burger', 'sushi', 'costco', 'walmart', 'wal-mart', 'safeway', 'kroger', 'whole foods',
+         'trader joe', 'desi mandi', 'fresh', 'bakery', 'deli', 'no frills', 'no frill'],
   clothes: ['clothing', 'apparel', 'fashion', 'zara', 'h&m', 'gap', 'old navy',
             'nordstrom', 'macy', 'target clothing', 'uniqlo', 'forever 21'],
-  medicine: ['pharmacy', 'drug', 'cvs', 'walgreens', 'rite aid', 'hospital',
+  medicine: ['pharmacy', 'drug', 'drugsmart', 'cvs', 'walgreens', 'rite aid', 'hospital',
              'clinic', 'medical', 'health', 'dental', 'vision', 'prescription'],
   entertainment: ['netflix', 'hulu', 'spotify', 'disney', 'amazon prime', 'cinema',
                   'movie', 'theater', 'concert', 'ticket', 'game', 'steam', 'xbox',
@@ -116,25 +116,48 @@ function splitCsvLine(line: string): string[] {
 // ── PDF statement parser (generic, best-effort) ───────────────────────────────
 //
 // PDF bank statements don't have a fixed layout like CSV — this scans extracted
-// text for lines shaped like "DATE  DESCRIPTION  AMOUNT", which covers most
-// common formats (Chase, BofA, Citi, Amex). Statements with multi-column
-// tables or scanned (non-text) PDFs may need manual entry instead.
+// text for lines shaped like "DATE  DESCRIPTION  AMOUNT". Two date styles are
+// covered: numeric ("08/26") used by Chase/BofA/Citi/Amex, and month-name
+// ("AUG 26 AUG 27" — transaction date + posting date) used by RBC and many
+// Canadian banks. Statements with multi-column tables or scanned (non-text)
+// PDFs may need manual entry instead.
 
-const PDF_LINE_REGEX = /(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s+(.+?)\s+\$?(-?[\d,]+\.\d{2})(?=\s|$)/g;
+const MONTH_MAP: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+const PDF_LINE_REGEX_NUMERIC = /(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s+(.+?)\s+\$?(-?[\d,]+\.\d{2})(?=\s|$)/g;
+
+// e.g. "AUG 26 AUG 27 AJ & ASHLEY'S NO FRILL NORTH YORK ON 5518136523888261156846 $4.00"
+const PDF_LINE_REGEX_MONTHNAME =
+  /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2}\s+(.+?)\s+(-?\$[\d,]+\.\d{2})(?=\s|$)/gi;
+
+function findStatementYear(text: string): number {
+  const match = text.match(/\b(20\d{2})\b/);
+  return match ? parseInt(match[1]) : new Date().getFullYear();
+}
+
+// Bank statement lines often trail off with a long reference/trace number —
+// strip it so the saved description reads as a merchant name, not digits.
+function stripTrailingReferenceNumber(desc: string): string {
+  return desc.replace(/(?:\s*\d[\d\s]{7,}\d)\s*$/, '').trim();
+}
 
 export function parsePdfStatementText(text: string): ParsedTransaction[] {
   const results: ParsedTransaction[] = [];
   const currentYear = new Date().getFullYear();
+  const statementYear = findStatementYear(text);
 
   let match: RegExpExecArray | null;
-  PDF_LINE_REGEX.lastIndex = 0;
-  while ((match = PDF_LINE_REGEX.exec(text)) !== null) {
-    const [, rawDate, rawDesc, rawAmt] = match;
 
+  PDF_LINE_REGEX_NUMERIC.lastIndex = 0;
+  while ((match = PDF_LINE_REGEX_NUMERIC.exec(text)) !== null) {
+    const [, rawDate, rawDesc, rawAmt] = match;
     const amount = parseFloat(rawAmt.replace(/,/g, ''));
     if (isNaN(amount) || amount <= 0) continue; // skip payments/credits
 
-    const description = rawDesc.trim().replace(/\s{2,}/g, ' ');
+    const description = stripTrailingReferenceNumber(rawDesc.replace(/\s{2,}/g, ' '));
     if (description.length < 2 || /^\d+$/.test(description)) continue;
 
     const dateWithYear = rawDate.split('/').length === 2 ? `${rawDate}/${currentYear}` : rawDate;
@@ -147,6 +170,28 @@ export function parsePdfStatementText(text: string): ParsedTransaction[] {
       shop: inferShop(description),
     });
   }
+
+  PDF_LINE_REGEX_MONTHNAME.lastIndex = 0;
+  while ((match = PDF_LINE_REGEX_MONTHNAME.exec(text)) !== null) {
+    const [, monthAbbr, day, rawDesc, rawAmt] = match;
+    const amount = parseFloat(rawAmt.replace(/[$,]/g, ''));
+    if (isNaN(amount) || amount <= 0) continue; // skip payments/credits
+
+    const description = stripTrailingReferenceNumber(rawDesc.replace(/\s{2,}/g, ' '));
+    if (description.length < 2 || /^\d+$/.test(description)) continue;
+
+    const month = MONTH_MAP[monthAbbr.toLowerCase()];
+    const isoDate = `${statementYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+    results.push({
+      date: isoDate,
+      amount,
+      description,
+      category: inferCategory(description),
+      shop: inferShop(description),
+    });
+  }
+
   return results;
 }
 
