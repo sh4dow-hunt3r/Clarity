@@ -21,6 +21,9 @@ import { parseReceiptText, parseCsvStatement, parsePdfStatementText } from '../u
 import { pickFileWeb, readFileAsText, readFileAsBase64 } from '../utils/webFilePicker';
 // pdfjs-dist is browser-only — its module-level code crashes native (Hermes) the
 // instant it's imported, so it's loaded lazily and only on the web platform.
+// On native, PDF text extraction instead runs inside a hidden WebView (a real
+// browser engine), via PdfTextExtractorWebView below.
+import PdfTextExtractorWebView, { PdfTextExtractorHandle } from '../components/PdfTextExtractorWebView';
 import { useCategories } from '../hooks/useCategories';
 
 const FOOD_SUBCATS: { key: FoodSubcategory; label: string }[] = [
@@ -68,6 +71,7 @@ export default function AddTransactionScreen() {
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [importing, setImporting] = useState(false);
+  const pdfExtractorRef = React.useRef<PdfTextExtractorHandle>(null);
 
   const { categories, getCategory, addCategory } = useCategories();
   const selectedCategory = getCategory(category);
@@ -186,13 +190,10 @@ export default function AddTransactionScreen() {
         isPdf = file.mimeType === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf');
 
         if (isPdf) {
-          // pdfjs-dist (used for text extraction) is browser-only — PDF import
-          // on iOS/Android isn't wired up yet, so point the user at CSV for now.
-          showAlert(
-            'PDF import not available here',
-            "PDF statement import currently only works in the web preview. On your phone, please use a CSV export from your bank, or enter transactions manually.",
-          );
-          return;
+          setImporting(true);
+          const base64 = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.Base64 });
+          const text = await pdfExtractorRef.current!.extractText(base64);
+          parsed = parsePdfStatementText(text);
         } else {
           const text = await FileSystem.readAsStringAsync(file.uri);
           parsed = parseCsvStatement(text);
@@ -468,6 +469,7 @@ export default function AddTransactionScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {Platform.OS !== 'web' && <PdfTextExtractorWebView ref={pdfExtractorRef} />}
     </ScrollView>
   );
 }
