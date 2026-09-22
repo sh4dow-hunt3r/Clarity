@@ -54,7 +54,7 @@ const PDF_EXTRACTOR_HTML = `
 
   function onPdfJsLoaded() {
     try {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
       report({ ready: true });
     } catch (e) {
       report({ ok: false, error: 'pdf.js init failed: ' + String(e && e.message || e) });
@@ -65,7 +65,7 @@ const PDF_EXTRACTOR_HTML = `
   }
 </script>
 <script
-  src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"
+  src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
   onload="onPdfJsLoaded()"
   onerror="onPdfJsFailed()"
 ></script>
