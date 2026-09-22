@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   TextInput,
@@ -21,24 +21,30 @@ export default function TransactionsScreen() {
   const [filterCat, setFilterCat] = useState<string | null>(null);
   const { categories, getCategory } = useCategories();
 
-  const load = useCallback(async () => {
-    const txns = await getTransactions(filterCat ? { category: filterCat } : undefined);
+  const load = useCallback(async (categoryOverride?: string | null) => {
+    const activeCategory = categoryOverride !== undefined ? categoryOverride : filterCat;
+    const txns = await getTransactions(activeCategory ? { category: activeCategory } : undefined);
     setTransactions(txns);
   }, [filterCat]);
 
   // Dashboard navigates here with a `filterCategory` param to jump straight
-  // into a filtered view — apply it, then clear it so it doesn't stick around
-  // on subsequent visits to this tab.
+  // into a filtered view. Resolving the active filter and loading in the same
+  // effect (rather than two separate useFocusEffects) avoids querying with a
+  // stale filter value from before the setFilterCat update has landed.
   useFocusEffect(
     useCallback(() => {
-      if (route.params?.filterCategory) {
-        setFilterCat(route.params.filterCategory);
+      const incoming = route.params?.filterCategory;
+      if (incoming) {
+        setFilterCat(incoming);
         navigation.setParams({ filterCategory: undefined });
       }
+      load(incoming ?? undefined);
     }, [route.params?.filterCategory]),
   );
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  // Reload whenever the filter chip selection changes while already on this
+  // screen (the focus effect above only handles entry via Dashboard's param).
+  useEffect(() => { load(); }, [filterCat]);
 
   const filtered = search
     ? transactions.filter(t =>
