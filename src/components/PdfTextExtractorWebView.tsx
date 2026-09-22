@@ -18,9 +18,13 @@ const PDF_EXTRACTOR_HTML = `
 <html>
 <head><meta charset="utf-8"></head>
 <body>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"></script>
 <script>
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
+  function report(payload) {
+    window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+  }
+  window.onerror = function (message, source, lineno) {
+    report({ ok: false, error: 'Script error: ' + message + ' (line ' + lineno + ')' });
+  };
 
   function base64ToUint8Array(base64) {
     const binary = atob(base64);
@@ -39,16 +43,32 @@ const PDF_EXTRACTOR_HTML = `
         const content = await page.getTextContent();
         fullText += content.items.map(item => item.str).join(' ') + '\\n';
       }
-      window.ReactNativeWebView.postMessage(JSON.stringify({ ok: true, text: fullText }));
+      report({ ok: true, text: fullText });
     } catch (e) {
-      window.ReactNativeWebView.postMessage(JSON.stringify({ ok: false, error: String(e && e.message || e) }));
+      report({ ok: false, error: 'Extraction failed: ' + String(e && e.message || e) });
     }
   }
 
   document.addEventListener('message', (e) => extract(e.data));
   window.addEventListener('message', (e) => extract(e.data));
-  window.ReactNativeWebView.postMessage(JSON.stringify({ ready: true }));
+
+  function onPdfJsLoaded() {
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
+      report({ ready: true });
+    } catch (e) {
+      report({ ok: false, error: 'pdf.js init failed: ' + String(e && e.message || e) });
+    }
+  }
+  function onPdfJsFailed() {
+    report({ ok: false, error: 'Could not load pdf.js from CDN — check your internet connection.' });
+  }
 </script>
+<script
+  src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"
+  onload="onPdfJsLoaded()"
+  onerror="onPdfJsFailed()"
+></script>
 </body>
 </html>
 `;
@@ -64,6 +84,7 @@ const PdfTextExtractorWebView = forwardRef<PdfTextExtractorHandle>((_props, ref)
   const pendingRef = useRef<{ resolve: (text: string) => void; reject: (err: Error) => void } | null>(null);
   const readyRef = useRef(false);
   const queuedBase64Ref = useRef<string | null>(null);
+  const loadErrorRef = useRef<string | null>(null);
 
   const sendIfReady = (base64: string) => {
     if (readyRef.current) {
@@ -76,6 +97,10 @@ const PdfTextExtractorWebView = forwardRef<PdfTextExtractorHandle>((_props, ref)
   useImperativeHandle(ref, () => ({
     extractText(base64: string) {
       return new Promise<string>((resolve, reject) => {
+        if (loadErrorRef.current) {
+          reject(new Error(loadErrorRef.current));
+          return;
+        }
         const timeout = setTimeout(() => {
           if (pendingRef.current) {
             pendingRef.current = null;
@@ -117,7 +142,13 @@ const PdfTextExtractorWebView = forwardRef<PdfTextExtractorHandle>((_props, ref)
 
           const pending = pendingRef.current;
           pendingRef.current = null;
-          if (!pending) return;
+          if (!pending) {
+            // No request in flight yet (e.g. the page failed to load before
+            // extractText was ever called) — remember the error so the next
+            // call fails immediately instead of waiting out the timeout.
+            if (!payload.ok) loadErrorRef.current = payload.error || 'PDF extraction failed';
+            return;
+          }
           if (payload.ok) pending.resolve(payload.text);
           else pending.reject(new Error(payload.error || 'PDF extraction failed'));
         }}
