@@ -15,7 +15,7 @@ import {
 } from '../db/database';
 import {
   Transaction, FoodItem, FoodSubcategory,
-  KNOWN_SHOPS, KnownShop, ICON_CHOICES, COLOR_CHOICES,
+  KNOWN_SHOPS, ICON_CHOICES, COLOR_CHOICES,
 } from '../types';
 import { parseReceiptText, parseCsvStatement, parsePdfStatementText } from '../utils/statementParser';
 import { pickFileWeb, readFileAsText, readFileAsBase64 } from '../utils/webFilePicker';
@@ -61,7 +61,6 @@ export default function AddTransactionScreen() {
   const [notes, setNotes] = useState(existing?.notes ?? '');
   const [foodItems, setFoodItems] = useState<FoodItemDraft[]>([]);
   const [showCatPicker, setShowCatPicker] = useState(false);
-  const [showShopPicker, setShowShopPicker] = useState(false);
   const [showNewCatForm, setShowNewCatForm] = useState(false);
   const [newCatLabel, setNewCatLabel] = useState('');
   const [newCatIcon, setNewCatIcon] = useState(ICON_CHOICES[0]);
@@ -302,12 +301,24 @@ export default function AddTransactionScreen() {
 
       {/* Shop */}
       <Text style={styles.label}>Shop</Text>
-      <TouchableOpacity style={styles.selectorBtn} onPress={() => setShowShopPicker(true)}>
-        <Text style={[styles.selectorText, !shop && { color: '#bbb' }]}>
-          {shop || 'Select shop…'}
-        </Text>
-        <MaterialCommunityIcons name="chevron-down" size={20} color="#999" />
-      </TouchableOpacity>
+      <TextInput
+        style={styles.input}
+        value={shop}
+        onChangeText={setShop}
+        placeholder="e.g. Costco, or type any shop name"
+        placeholderTextColor="#bbb"
+      />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: -10, marginBottom: 16 }}>
+        {KNOWN_SHOPS.filter(s => s !== 'Other').map(s => (
+          <TouchableOpacity
+            key={s}
+            style={[styles.chip, shop === s && styles.chipActive]}
+            onPress={() => setShop(s)}
+          >
+            <Text style={[styles.chipText, shop === s && styles.chipTextActive]}>{s}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       {/* Subcategory (food only) */}
       {category === 'food' && (
@@ -457,30 +468,6 @@ export default function AddTransactionScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Shop picker modal */}
-      <Modal visible={showShopPicker} transparent animationType="slide">
-        <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowShopPicker(false)}>
-          <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>Choose Shop</Text>
-            {KNOWN_SHOPS.map(s => (
-              <TouchableOpacity
-                key={s}
-                style={styles.modalRow}
-                onPress={() => { setShop(s); setShowShopPicker(false); }}
-              >
-                <Text style={styles.modalRowText}>{s}</Text>
-                {shop === s && <MaterialCommunityIcons name="check" size={18} color="#1976D2" />}
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={styles.modalRow}
-              onPress={() => setShowShopPicker(false)}
-            >
-              <Text style={[styles.modalRowText, { color: '#999' }]}>Enter manually above</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </ScrollView>
   );
 }
