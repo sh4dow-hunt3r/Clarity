@@ -6,7 +6,7 @@ import {
 import { PieChart, BarChart } from 'react-native-chart-kit';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getMonthlySummary, getAvailableMonths } from '../db/database';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCategories } from '../hooks/useCategories';
 
 const { width } = Dimensions.get('window');
@@ -16,6 +16,7 @@ const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun',
                      'Jul','Aug','Sep','Oct','Nov','Dec'];
 
 export default function DashboardScreen() {
+  const navigation = useNavigation<any>();
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
@@ -37,12 +38,20 @@ export default function DashboardScreen() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  const goToCategory = (categoryKey: string) => {
+    navigation.navigate('Transactions', {
+      screen: 'TransactionsList',
+      params: { filterCategory: categoryKey },
+    });
+  };
+
   const pieData = summary
     ? Object.entries(summary.by_category)
         .filter(([, v]) => v > 0)
         .map(([cat, v]) => {
           const def = getCategory(cat);
           return {
+            key: cat,
             name: def.label,
             amount: v,
             color: def.color,
@@ -124,14 +133,18 @@ export default function DashboardScreen() {
                 ? ((item.amount / summary.total) * 100).toFixed(1)
                 : '0';
               return (
-                <View key={item.name} style={styles.categoryRow}>
+                <TouchableOpacity
+                  key={item.name}
+                  style={styles.categoryRow}
+                  onPress={() => goToCategory(item.key)}
+                >
                   <View style={[styles.categoryDot, { backgroundColor: item.color }]} />
                   <Text style={styles.categoryName}>{item.name}</Text>
                   <Text style={styles.categoryPct}>{pct}%</Text>
                   <Text style={styles.categoryAmt}>
                     ${item.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </Text>
-                </View>
+                </TouchableOpacity>
               );
             })
         }
@@ -144,7 +157,11 @@ export default function DashboardScreen() {
           {categories.map(cat => {
             const amt = summary?.by_category[cat.key] ?? 0;
             return (
-              <View key={cat.key} style={styles.gridItem}>
+              <TouchableOpacity
+                key={cat.key}
+                style={styles.gridItem}
+                onPress={() => goToCategory(cat.key)}
+              >
                 <MaterialCommunityIcons
                   name={cat.icon as any}
                   size={24}
@@ -154,7 +171,7 @@ export default function DashboardScreen() {
                 <Text style={styles.gridAmt}>
                   {amt > 0 ? `$${amt.toFixed(0)}` : '—'}
                 </Text>
-              </View>
+              </TouchableOpacity>
             );
           })}
         </View>

@@ -4,7 +4,7 @@ import {
   TextInput,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { getTransactions, deleteTransaction } from '../db/database';
 import { Transaction } from '../types';
 import { useCategories } from '../hooks/useCategories';
@@ -15,6 +15,7 @@ const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun',
 
 export default function TransactionsScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState<string | null>(null);
@@ -24,6 +25,18 @@ export default function TransactionsScreen() {
     const txns = await getTransactions(filterCat ? { category: filterCat } : undefined);
     setTransactions(txns);
   }, [filterCat]);
+
+  // Dashboard navigates here with a `filterCategory` param to jump straight
+  // into a filtered view — apply it, then clear it so it doesn't stick around
+  // on subsequent visits to this tab.
+  useFocusEffect(
+    useCallback(() => {
+      if (route.params?.filterCategory) {
+        setFilterCat(route.params.filterCategory);
+        navigation.setParams({ filterCategory: undefined });
+      }
+    }, [route.params?.filterCategory]),
+  );
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
