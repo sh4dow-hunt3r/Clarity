@@ -86,6 +86,7 @@ export default function TransactionsScreen() {
       <FlatList
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={styles.filterList}
         data={[null, ...categories.map(c => c.key)]}
         keyExtractor={item => item ?? 'all'}
         contentContainerStyle={styles.filterRow}
@@ -115,6 +116,7 @@ export default function TransactionsScreen() {
 
       {/* Transaction list */}
       <FlatList
+        style={styles.txnList}
         data={filtered}
         keyExtractor={t => String(t.id)}
         contentContainerStyle={filtered.length === 0 ? styles.emptyContainer : styles.listContent}
@@ -180,6 +182,11 @@ const styles = StyleSheet.create({
   },
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 15, color: '#333', padding: 0 },
+  // Explicit flexGrow/flexShrink: 0 and a fixed height keep this row from
+  // stretching to fill leftover vertical space — without it, React Native's
+  // layout engine can hand the chip row extra height whenever the sibling
+  // transaction list's content collapses (e.g. when it's empty).
+  filterList: { flexGrow: 0, flexShrink: 0, height: 52 },
   filterRow: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
   filterChip: {
     flexDirection: 'row', alignItems: 'center',
@@ -189,6 +196,7 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: '#1976D2' },
   filterChipText: { fontSize: 12, color: '#555', fontWeight: '500' },
   filterChipTextActive: { color: '#fff' },
+  txnList: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingBottom: 90 },
   emptyContainer: { flex: 1 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
