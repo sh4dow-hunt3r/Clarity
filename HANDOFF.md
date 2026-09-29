@@ -10,8 +10,8 @@ work with full context.
 
 ## Project identity
 - **App name:** Clarity
-- **Owner:** Aditya Kulkarni (email: kulkarniaditya1207@gmail.com; git commit
-  email: adi.kulkarni1207@gmail.com)
+- **Owner:** Aditya Kulkarni (email: kulkarniaditya1207@gmail.com — same
+  address the git commit config uses)
 - **Local path:** `~/Developer/clarity` — this is the ONLY real copy. An
   earlier OneDrive-synced copy at `Desktop/ClaudeCode/clarity` was
   intentionally deleted because OneDrive broke Node's `process.cwd()`. If you
