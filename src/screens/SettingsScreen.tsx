@@ -54,12 +54,12 @@ export default function SettingsScreen() {
 
   const cleanUpMerchantNames = async () => {
     const all = await getTransactions();
-    // Only transactions that still look like raw statement text are worth
-    // touching — skip ones that already match their cached clean name.
-    const candidates = all.filter(t => {
-      const rawKey = t.raw_description ?? t.description;
-      return t.source === 'statement' && rawKey !== t.description;
-    });
+    // Process every statement-imported transaction — the cache makes this
+    // cheap to re-run, since already-clean ones just get looked up and
+    // rewritten to the same value rather than being detected and skipped
+    // up front (there's no reliable way to tell "already clean" from
+    // "genuinely named that" just by looking at the text).
+    const candidates = all.filter(t => t.source === 'statement');
 
     if (candidates.length === 0) {
       showAlert('Nothing to clean', 'All your imported transactions already look clean, or none were imported from a statement.');
