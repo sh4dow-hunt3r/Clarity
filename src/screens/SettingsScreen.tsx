@@ -78,14 +78,14 @@ export default function SettingsScreen() {
       try {
         const cached = await getMerchantAlias(rawKey);
         if (cached) {
-          await updateTransactionMerchant(t.id, cached.cleanName, cached.category ?? t.category);
+          await updateTransactionMerchant(t.id, cached.cleanName, cached.category ?? t.category, rawKey);
           updated++;
         } else if (hasKey) {
           const result = await identifyMerchantAI(rawKey, t.amount, categories);
           apiCalls++;
           if (result) {
             await setMerchantAlias(rawKey, result.cleanName, result.category);
-            await updateTransactionMerchant(t.id, result.cleanName, result.category);
+            await updateTransactionMerchant(t.id, result.cleanName, result.category, rawKey);
             updated++;
           }
         }

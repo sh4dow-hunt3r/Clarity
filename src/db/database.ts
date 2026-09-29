@@ -125,11 +125,16 @@ export async function updateTransaction(t: Transaction): Promise<void> {
 
 // Used by the "Clean Up Merchant Names" pass to rewrite an already-imported
 // transaction's display fields without touching its date/amount/notes.
-export async function updateTransactionMerchant(id: number, cleanName: string, category: string): Promise<void> {
+// Backfills raw_description with the exact text that was used as the cache
+// key (COALESCE keeps it if already set) — without this, a transaction that
+// predates the raw_description column would have its already-cleaned
+// `description` mistaken for raw statement text on the next cleanup run,
+// producing a different (and wrong) name each time it's re-processed.
+export async function updateTransactionMerchant(id: number, cleanName: string, category: string, rawKeyUsed: string): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    'UPDATE transactions SET description=?, shop=?, category=? WHERE id=?',
-    cleanName, cleanName, category, id,
+    'UPDATE transactions SET description=?, shop=?, category=?, raw_description=COALESCE(raw_description, ?) WHERE id=?',
+    cleanName, cleanName, category, rawKeyUsed, id,
   );
 }
 
