@@ -2,13 +2,24 @@ import * as SQLite from 'expo-sqlite';
 import { Transaction, FoodItem, CategoryDef } from '../types';
 
 let db: SQLite.SQLiteDatabase | null = null;
+let initPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
+// Many screens call getDb() concurrently on mount (each firing off its own
+// Promise.all of queries). Without caching the in-flight init promise, each
+// concurrent call would see `db` as null and race to open + migrate the
+// database independently — which is exactly how the schema migration below
+// ended up running twice in parallel and hit "duplicate column" errors.
 export async function getDb(): Promise<SQLite.SQLiteDatabase> {
-  if (!db) {
-    db = await SQLite.openDatabaseAsync('clarity.db');
-    await initSchema(db);
+  if (db) return db;
+  if (!initPromise) {
+    initPromise = (async () => {
+      const database = await SQLite.openDatabaseAsync('clarity.db');
+      await initSchema(database);
+      db = database;
+      return database;
+    })();
   }
-  return db;
+  return initPromise;
 }
 
 async function initSchema(db: SQLite.SQLiteDatabase) {
@@ -65,10 +76,22 @@ async function initSchema(db: SQLite.SQLiteDatabase) {
   const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(transactions)');
   const columnNames = new Set(columns.map(c => c.name));
   if (!columnNames.has('import_batch')) {
-    await db.execAsync('ALTER TABLE transactions ADD COLUMN import_batch TEXT');
+    // Belt-and-suspenders: getDb()'s init-promise cache is the real fix for
+    // concurrent-call races, but swallowing "duplicate column" specifically
+    // means this migration can never hard-crash the app even if some other
+    // path re-runs it.
+    try {
+      await db.execAsync('ALTER TABLE transactions ADD COLUMN import_batch TEXT');
+    } catch (e: any) {
+      if (!String(e?.message ?? e).includes('duplicate column')) throw e;
+    }
   }
   if (!columnNames.has('import_filename')) {
-    await db.execAsync('ALTER TABLE transactions ADD COLUMN import_filename TEXT');
+    try {
+      await db.execAsync('ALTER TABLE transactions ADD COLUMN import_filename TEXT');
+    } catch (e: any) {
+      if (!String(e?.message ?? e).includes('duplicate column')) throw e;
+    }
   }
 }
 
