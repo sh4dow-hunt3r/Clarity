@@ -38,6 +38,7 @@ async function initSchema(db: SQLite.SQLiteDatabase) {
       notes           TEXT,
       import_batch    TEXT,
       import_filename TEXT,
+      raw_description TEXT,
       created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -65,30 +66,31 @@ async function initSchema(db: SQLite.SQLiteDatabase) {
       subscription_key TEXT PRIMARY KEY
     );
 
+    CREATE TABLE IF NOT EXISTS merchant_aliases (
+      raw_key    TEXT PRIMARY KEY,
+      clean_name TEXT NOT NULL,
+      category   TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_transactions_date     ON transactions(date);
     CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
     CREATE INDEX IF NOT EXISTS idx_food_items_txn        ON food_items(transaction_id);
   `);
 
-  // Migration: existing installs created the transactions table before
-  // import_batch/import_filename existed, and CREATE TABLE IF NOT EXISTS
-  // won't retroactively add columns to it.
+  // Migration: existing installs created the transactions table before these
+  // columns existed, and CREATE TABLE IF NOT EXISTS won't retroactively add
+  // columns to it.
   const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(transactions)');
   const columnNames = new Set(columns.map(c => c.name));
-  if (!columnNames.has('import_batch')) {
+  for (const col of ['import_batch', 'import_filename', 'raw_description']) {
+    if (columnNames.has(col)) continue;
     // Belt-and-suspenders: getDb()'s init-promise cache is the real fix for
     // concurrent-call races, but swallowing "duplicate column" specifically
     // means this migration can never hard-crash the app even if some other
     // path re-runs it.
     try {
-      await db.execAsync('ALTER TABLE transactions ADD COLUMN import_batch TEXT');
-    } catch (e: any) {
-      if (!String(e?.message ?? e).includes('duplicate column')) throw e;
-    }
-  }
-  if (!columnNames.has('import_filename')) {
-    try {
-      await db.execAsync('ALTER TABLE transactions ADD COLUMN import_filename TEXT');
+      await db.execAsync(`ALTER TABLE transactions ADD COLUMN ${col} TEXT`);
     } catch (e: any) {
       if (!String(e?.message ?? e).includes('duplicate column')) throw e;
     }
@@ -102,11 +104,11 @@ export async function insertTransaction(
 ): Promise<number> {
   const db = await getDb();
   const result = await db.runAsync(
-    `INSERT INTO transactions (date, amount, description, category, subcategory, shop, source, notes, import_batch, import_filename)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO transactions (date, amount, description, category, subcategory, shop, source, notes, import_batch, import_filename, raw_description)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     t.date, t.amount, t.description, t.category,
     t.subcategory ?? null, t.shop ?? null, t.source, t.notes ?? null,
-    t.import_batch ?? null, t.import_filename ?? null,
+    t.import_batch ?? null, t.import_filename ?? null, t.raw_description ?? null,
   );
   return result.lastInsertRowId;
 }
@@ -118,6 +120,16 @@ export async function updateTransaction(t: Transaction): Promise<void> {
      subcategory=?, shop=?, notes=? WHERE id=?`,
     t.date, t.amount, t.description, t.category,
     t.subcategory ?? null, t.shop ?? null, t.notes ?? null, t.id,
+  );
+}
+
+// Used by the "Clean Up Merchant Names" pass to rewrite an already-imported
+// transaction's display fields without touching its date/amount/notes.
+export async function updateTransactionMerchant(id: number, cleanName: string, category: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE transactions SET description=?, shop=?, category=? WHERE id=?',
+    cleanName, cleanName, category, id,
   );
 }
 
@@ -312,4 +324,31 @@ export async function deleteImportBatch(batch: string): Promise<void> {
     batch,
   );
   await db.runAsync('DELETE FROM transactions WHERE import_batch = ?', batch);
+}
+
+// ── Merchant alias cache ──────────────────────────────────────────────────────
+//
+// Caches AI-resolved "IMAGINUS CANADA LIMITE TORONTO ON" -> "Imaginus" style
+// cleanups keyed by the raw statement text, so the same merchant is only ever
+// sent to the AI once, no matter how many times it shows up across imports.
+
+export function normalizeMerchantKey(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export async function getMerchantAlias(rawDescription: string): Promise<{ cleanName: string; category: string | null } | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ clean_name: string; category: string | null }>(
+    'SELECT clean_name, category FROM merchant_aliases WHERE raw_key = ?',
+    normalizeMerchantKey(rawDescription),
+  );
+  return row ? { cleanName: row.clean_name, category: row.category } : null;
+}
+
+export async function setMerchantAlias(rawDescription: string, cleanName: string, category: string | null): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'INSERT OR REPLACE INTO merchant_aliases (raw_key, clean_name, category) VALUES (?, ?, ?)',
+    normalizeMerchantKey(rawDescription), cleanName, category,
+  );
 }

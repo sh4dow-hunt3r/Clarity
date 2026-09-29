@@ -31,6 +31,11 @@ export interface Transaction {
   notes: string | null;
   import_batch?: string | null;
   import_filename?: string | null;
+  // The merchant text exactly as it appeared in the imported statement,
+  // preserved even after `description`/`shop` get AI-cleaned — this is what
+  // the merchant_aliases cache is keyed on, so cleanup is idempotent and
+  // never re-charges the AI for a merchant it's already resolved.
+  raw_description?: string | null;
 }
 
 export interface MonthlySummary {

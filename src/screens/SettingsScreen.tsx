@@ -6,6 +6,11 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { getApiKey, setApiKey, clearApiKey } from '../utils/aiSettings';
+import { identifyMerchantAI } from '../utils/aiService';
+import {
+  getTransactions, getMerchantAlias, setMerchantAlias, updateTransactionMerchant,
+} from '../db/database';
+import { useCategories } from '../hooks/useCategories';
 import { showAlert } from '../utils/alert';
 
 export default function SettingsScreen() {
@@ -13,6 +18,9 @@ export default function SettingsScreen() {
   const [savedKeyPresent, setSavedKeyPresent] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanupProgress, setCleanupProgress] = useState<{ done: number; total: number } | null>(null);
+  const { categories } = useCategories();
 
   const load = useCallback(async () => {
     const existing = await getApiKey();
@@ -42,6 +50,61 @@ export default function SettingsScreen() {
     setKeyInput('');
     setSavedKeyPresent(false);
     showAlert('Removed', 'Your API key has been deleted from this device.');
+  };
+
+  const cleanUpMerchantNames = async () => {
+    const all = await getTransactions();
+    // Only transactions that still look like raw statement text are worth
+    // touching — skip ones that already match their cached clean name.
+    const candidates = all.filter(t => {
+      const rawKey = t.raw_description ?? t.description;
+      return t.source === 'statement' && rawKey !== t.description;
+    });
+
+    if (candidates.length === 0) {
+      showAlert('Nothing to clean', 'All your imported transactions already look clean, or none were imported from a statement.');
+      return;
+    }
+
+    const hasKey = savedKeyPresent;
+    setCleaning(true);
+    setCleanupProgress({ done: 0, total: candidates.length });
+    let updated = 0;
+    let apiCalls = 0;
+
+    for (let i = 0; i < candidates.length; i++) {
+      const t = candidates[i];
+      const rawKey = t.raw_description ?? t.description;
+      try {
+        const cached = await getMerchantAlias(rawKey);
+        if (cached) {
+          await updateTransactionMerchant(t.id, cached.cleanName, cached.category ?? t.category);
+          updated++;
+        } else if (hasKey) {
+          const result = await identifyMerchantAI(rawKey, t.amount, categories);
+          apiCalls++;
+          if (result) {
+            await setMerchantAlias(rawKey, result.cleanName, result.category);
+            await updateTransactionMerchant(t.id, result.cleanName, result.category);
+            updated++;
+          }
+        }
+      } catch {
+        // Skip this one and keep going — a single failure shouldn't stop
+        // the whole cleanup pass.
+      }
+      setCleanupProgress({ done: i + 1, total: candidates.length });
+    }
+
+    setCleaning(false);
+    setCleanupProgress(null);
+    const skipped = candidates.length - updated;
+    showAlert(
+      'Cleanup complete',
+      `Updated ${updated} of ${candidates.length} transactions` +
+        (apiCalls > 0 ? ` (${apiCalls} new merchant${apiCalls === 1 ? '' : 's'} looked up via AI).` : ' using the cache only — no AI calls needed.') +
+        (!hasKey && skipped > 0 ? `\n\n${skipped} transactions had no cached name and were left as-is — add an API key to resolve those too.` : ''),
+    );
   };
 
   return (
@@ -105,6 +168,29 @@ export default function SettingsScreen() {
           )}
         >
           <Text style={styles.helpLink}>Don't have a key? Tap here for instructions.</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.card, { marginTop: 16 }]}>
+        <View style={styles.cardHeader}>
+          <MaterialCommunityIcons name="broom" size={24} color="#7B1FA2" />
+          <Text style={styles.cardTitle}>Clean Up Merchant Names</Text>
+        </View>
+        <Text style={styles.cardDesc}>
+          Rewrites messy imported names like "IMAGINUS CANADA LIMITE TORONTO ON" into
+          readable ones like "Imaginus". Checks a local cache first — each merchant is only
+          ever sent to the AI once, no matter how many transactions or future imports use it.
+        </Text>
+        <TouchableOpacity
+          style={[styles.saveBtn, { backgroundColor: '#7B1FA2' }]}
+          onPress={cleanUpMerchantNames}
+          disabled={cleaning}
+        >
+          {cleaning
+            ? <Text style={styles.saveBtnText}>
+                Cleaning… {cleanupProgress ? `${cleanupProgress.done}/${cleanupProgress.total}` : ''}
+              </Text>
+            : <Text style={styles.saveBtnText}>Clean Up Now</Text>}
         </TouchableOpacity>
       </View>
     </ScrollView>

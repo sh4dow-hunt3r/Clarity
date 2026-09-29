@@ -12,6 +12,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   insertTransaction, updateTransaction,
   insertFoodItems, getFoodItemsForTransaction,
+  getMerchantAlias, setMerchantAlias,
 } from '../db/database';
 import {
   Transaction, FoodItem, FoodSubcategory,
@@ -26,7 +27,7 @@ import { pickFilesWeb, readFileAsText, readFileAsBase64 } from '../utils/webFile
 import PdfTextExtractorWebView, { PdfTextExtractorHandle } from '../components/PdfTextExtractorWebView';
 import { useCategories } from '../hooks/useCategories';
 import { getApiKey } from '../utils/aiSettings';
-import { categorizeTransactionAI } from '../utils/aiService';
+import { identifyMerchantAI } from '../utils/aiService';
 
 const FOOD_SUBCATS: { key: FoodSubcategory; label: string }[] = [
   { key: 'fruits', label: 'Fruits' },
@@ -199,7 +200,7 @@ export default function AddTransactionScreen() {
       setImporting(true);
       const extractPdfTextWeb = Platform.OS === 'web' ? (await import('../utils/pdfParser')).extractPdfText : null;
 
-      const allParsed: (ReturnType<typeof parseCsvStatement>[number] & { import_filename: string })[] = [];
+      const allParsed: (ReturnType<typeof parseCsvStatement>[number] & { import_filename: string; raw_description: string })[] = [];
       const failedFiles: string[] = [];
 
       for (const file of files) {
@@ -216,7 +217,7 @@ export default function AddTransactionScreen() {
             parsed = parseCsvStatement(text);
           }
           if (parsed.length === 0) failedFiles.push(file.name);
-          allParsed.push(...parsed.map(p => ({ ...p, import_filename: file.name })));
+          allParsed.push(...parsed.map(p => ({ ...p, import_filename: file.name, raw_description: p.description })));
         } catch {
           failedFiles.push(file.name);
         }
@@ -240,15 +241,30 @@ export default function AddTransactionScreen() {
       const importAll = async (withAI: boolean) => {
         setImporting(true);
         try {
-          if (withAI) {
-            for (const p of allParsed) {
+          for (const p of allParsed) {
+            const rawKey = p.raw_description;
+            const cached = await getMerchantAlias(rawKey);
+            if (cached) {
+              // Free — no API call needed, this merchant was already resolved
+              // by a previous import.
+              p.shop = cached.cleanName;
+              p.description = cached.cleanName;
+              if (cached.category) p.category = cached.category;
+              continue;
+            }
+            if (withAI) {
               try {
-                const result = await categorizeTransactionAI(p.description, p.shop, p.amount, categories);
-                if (result) p.category = result.category;
+                const result = await identifyMerchantAI(rawKey, p.amount, categories);
+                if (result) {
+                  p.shop = result.cleanName;
+                  p.description = result.cleanName;
+                  p.category = result.category;
+                  await setMerchantAlias(rawKey, result.cleanName, result.category);
+                }
               } catch {
-                // If a single AI call fails (rate limit, network blip), keep the
-                // keyword-based guess for that transaction rather than aborting
-                // the whole import.
+                // If a single AI lookup fails (rate limit, network blip), keep
+                // the keyword-based guess for that transaction rather than
+                // aborting the whole import.
               }
             }
           }
@@ -269,7 +285,9 @@ export default function AddTransactionScreen() {
       confirmAlert(
         `Import ${allParsed.length} transactions from ${filesLabel}?`,
         `Found ${allParsed.length} transactions.` + skippedNote +
-          (hasKey ? '' : '\n\nTip: add an Anthropic API key in Settings for more accurate AI categorization.'),
+          (hasKey
+            ? ''
+            : '\n\nTip: add an Anthropic API key in Settings to clean up messy merchant names (e.g. "IMAGINUS CANADA LIMITE TORONTO ON" → "Imaginus") and improve categorization.'),
         [
           { text: 'Cancel', style: 'cancel' },
           ...(hasKey ? [{ text: 'Import with AI', onPress: () => importAll(true) }] : []),
