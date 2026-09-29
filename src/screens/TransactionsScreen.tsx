@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
-import { getTransactions, deleteTransaction } from '../db/database';
+import { getTransactions, deleteTransaction, getAvailableMonths, deleteTransactionsByPeriod } from '../db/database';
 import { Transaction } from '../types';
 import { useCategories } from '../hooks/useCategories';
 import { confirmAlert } from '../utils/alert';
@@ -19,13 +19,23 @@ export default function TransactionsScreen() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState<string | null>(null);
+  const [filterPeriod, setFilterPeriod] = useState<{ year: number; month: number } | null>(null);
+  const [availableMonths, setAvailableMonths] = useState<{ year: number; month: number }[]>([]);
   const { categories, getCategory } = useCategories();
 
   const load = useCallback(async (categoryOverride?: string | null) => {
     const activeCategory = categoryOverride !== undefined ? categoryOverride : filterCat;
-    const txns = await getTransactions(activeCategory ? { category: activeCategory } : undefined);
+    const [txns, months] = await Promise.all([
+      getTransactions({
+        category: activeCategory ?? undefined,
+        year: filterPeriod?.year,
+        month: filterPeriod?.month,
+      }),
+      getAvailableMonths(),
+    ]);
     setTransactions(txns);
-  }, [filterCat]);
+    setAvailableMonths(months);
+  }, [filterCat, filterPeriod]);
 
   // Dashboard navigates here with a `filterCategory` param to jump straight
   // into a filtered view. Resolving the active filter and loading in the same
@@ -44,7 +54,7 @@ export default function TransactionsScreen() {
 
   // Reload whenever the filter chip selection changes while already on this
   // screen (the focus effect above only handles entry via Dashboard's param).
-  useEffect(() => { load(); }, [filterCat]);
+  useEffect(() => { load(); }, [filterCat, filterPeriod]);
 
   const filtered = search
     ? transactions.filter(t =>
@@ -61,6 +71,26 @@ export default function TransactionsScreen() {
         onPress: async () => { await deleteTransaction(id); load(); },
       },
     ]);
+  };
+
+  const confirmDeletePeriod = () => {
+    if (!filterPeriod) return;
+    const label = `${MONTH_NAMES[filterPeriod.month - 1]} ${filterPeriod.year}`;
+    confirmAlert(
+      `Delete all transactions from ${label}?`,
+      `This will permanently delete all ${transactions.length} transactions from ${label}. This can't be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All', style: 'destructive',
+          onPress: async () => {
+            await deleteTransactionsByPeriod(filterPeriod.year, filterPeriod.month);
+            setFilterPeriod(null);
+            load();
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -80,6 +110,38 @@ export default function TransactionsScreen() {
             <MaterialCommunityIcons name="close-circle" size={18} color="#bbb" />
           </TouchableOpacity>
         ) : null}
+      </View>
+
+      {/* Month/year filter chips */}
+      <View style={styles.periodRow}>
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.periodFilterList}
+          data={[null, ...availableMonths]}
+          keyExtractor={item => item ? `${item.year}-${item.month}` : 'all-time'}
+          contentContainerStyle={styles.filterRow}
+          renderItem={({ item }) => {
+            const active = item
+              ? filterPeriod?.year === item.year && filterPeriod?.month === item.month
+              : filterPeriod === null;
+            return (
+              <TouchableOpacity
+                style={[styles.filterChip, active && styles.periodChipActive]}
+                onPress={() => setFilterPeriod(item)}
+              >
+                <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                  {item ? `${MONTH_NAMES[item.month - 1]} ${item.year}` : 'All Time'}
+                </Text>
+              </TouchableOpacity>
+            );
+          }}
+        />
+        {filterPeriod && (
+          <TouchableOpacity style={styles.deletePeriodBtn} onPress={confirmDeletePeriod}>
+            <MaterialCommunityIcons name="trash-can-outline" size={18} color="#E53935" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Category filter chips */}
@@ -188,6 +250,12 @@ const styles = StyleSheet.create({
   // transaction list's content collapses (e.g. when it's empty).
   filterList: { flexGrow: 0, flexShrink: 0, height: 52 },
   filterRow: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+  periodRow: { flexDirection: 'row', alignItems: 'center' },
+  periodFilterList: { flexGrow: 1, flexShrink: 1, height: 52 },
+  periodChipActive: { backgroundColor: '#7B1FA2' },
+  deletePeriodBtn: {
+    marginRight: 16, padding: 8, borderRadius: 20, backgroundColor: '#fdecea',
+  },
   filterChip: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 12, paddingVertical: 6,

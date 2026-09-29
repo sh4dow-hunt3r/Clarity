@@ -5,10 +5,15 @@
 // positioning instead) sidesteps the bug; the grace period after 'cancel' guards
 // against it further in case 'change' is just slow to arrive.
 export function pickFileWeb(accept: string): Promise<File | null> {
+  return pickFilesWeb(accept, false).then(files => files[0] ?? null);
+}
+
+export function pickFilesWeb(accept: string, multiple = true): Promise<File[]> {
   return new Promise(resolve => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = accept;
+    input.multiple = multiple;
     input.style.position = 'fixed';
     input.style.top = '0';
     input.style.left = '-9999px';
@@ -23,9 +28,9 @@ export function pickFileWeb(accept: string): Promise<File | null> {
     input.addEventListener('change', () => {
       if (settled) return;
       settled = true;
-      const file = input.files && input.files.length > 0 ? input.files[0] : null;
+      const files = input.files ? Array.from(input.files) : [];
       cleanup();
-      resolve(file);
+      resolve(files);
     });
 
     input.addEventListener('cancel', () => {
@@ -33,7 +38,7 @@ export function pickFileWeb(accept: string): Promise<File | null> {
         if (settled) return;
         settled = true;
         cleanup();
-        resolve(null);
+        resolve([]);
       }, 300);
     });
 

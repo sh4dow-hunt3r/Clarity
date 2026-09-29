@@ -18,7 +18,7 @@ import {
   KNOWN_SHOPS, ICON_CHOICES, COLOR_CHOICES,
 } from '../types';
 import { parseReceiptText, parseCsvStatement, parsePdfStatementText } from '../utils/statementParser';
-import { pickFileWeb, readFileAsText, readFileAsBase64 } from '../utils/webFilePicker';
+import { pickFilesWeb, readFileAsText, readFileAsBase64 } from '../utils/webFilePicker';
 // pdfjs-dist is browser-only — its module-level code crashes native (Hermes) the
 // instant it's imported, so it's loaded lazily and only on the web platform.
 // On native, PDF text extraction instead runs inside a hidden WebView (a real
@@ -161,62 +161,87 @@ export default function AddTransactionScreen() {
 
   const importStatement = async () => {
     try {
-      let isPdf: boolean;
-      let parsed;
+      // Normalize both platforms' file pickers into one shape: a name, an
+      // isPdf flag, and lazy readers for text/base64.
+      let files: {
+        name: string;
+        isPdf: boolean;
+        readText: () => Promise<string>;
+        readBase64: () => Promise<string>;
+      }[] = [];
 
       if (Platform.OS === 'web') {
         // expo-document-picker's web implementation has a known Chrome bug where
         // it reports canceled:true even after a real file selection — bypass it
         // with our own picker on web.
-        const file = await pickFileWeb('.csv,.pdf,text/csv,application/pdf');
-        if (!file) return;
-
-        isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-        if (isPdf) {
-          setImporting(true);
-          const { extractPdfText } = await import('../utils/pdfParser');
-          const base64 = await readFileAsBase64(file);
-          const text = await extractPdfText(base64);
-          parsed = parsePdfStatementText(text);
-        } else {
-          const text = await readFileAsText(file);
-          parsed = parseCsvStatement(text);
-        }
+        const picked = await pickFilesWeb('.csv,.pdf,text/csv,application/pdf', true);
+        if (picked.length === 0) return;
+        files = picked.map(file => ({
+          name: file.name,
+          isPdf: file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'),
+          readText: () => readFileAsText(file),
+          readBase64: () => readFileAsBase64(file),
+        }));
       } else {
         const result = await DocumentPicker.getDocumentAsync({
           type: ['text/csv', 'application/csv', 'text/comma-separated-values', 'application/pdf'],
+          multiple: true,
         });
         if (result.canceled) return;
-
-        const file = result.assets[0];
-        isPdf = file.mimeType === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf');
-
-        if (isPdf) {
-          setImporting(true);
-          const base64 = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.Base64 });
-          const text = await pdfExtractorRef.current!.extractText(base64);
-          parsed = parsePdfStatementText(text);
-        } else {
-          const text = await FileSystem.readAsStringAsync(file.uri);
-          parsed = parseCsvStatement(text);
-        }
+        files = result.assets.map(asset => ({
+          name: asset.name,
+          isPdf: asset.mimeType === 'application/pdf' || asset.name?.toLowerCase().endsWith('.pdf'),
+          readText: () => FileSystem.readAsStringAsync(asset.uri),
+          readBase64: () => FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }),
+        }));
       }
 
-      if (parsed.length === 0) {
+      setImporting(true);
+      const extractPdfTextWeb = Platform.OS === 'web' ? (await import('../utils/pdfParser')).extractPdfText : null;
+
+      const allParsed: (ReturnType<typeof parseCsvStatement>[number] & { import_filename: string })[] = [];
+      const failedFiles: string[] = [];
+
+      for (const file of files) {
+        try {
+          let parsed: ReturnType<typeof parseCsvStatement>;
+          if (file.isPdf) {
+            const base64 = await file.readBase64();
+            const text = extractPdfTextWeb
+              ? await extractPdfTextWeb(base64)
+              : await pdfExtractorRef.current!.extractText(base64);
+            parsed = parsePdfStatementText(text);
+          } else {
+            const text = await file.readText();
+            parsed = parseCsvStatement(text);
+          }
+          if (parsed.length === 0) failedFiles.push(file.name);
+          allParsed.push(...parsed.map(p => ({ ...p, import_filename: file.name })));
+        } catch {
+          failedFiles.push(file.name);
+        }
+      }
+      setImporting(false);
+
+      if (allParsed.length === 0) {
         showAlert(
           'Could not parse statement',
-          isPdf
-            ? "We couldn't find transaction lines in this PDF. Its layout may differ from what we support yet, or it may be a scanned image rather than text. Try entering transactions manually, or let us know the bank so we can adjust."
-            : undefined,
+          "We couldn't find transaction lines in the selected file(s). Their layout may differ from what we support yet, or a PDF may be a scanned image rather than text. Try entering transactions manually, or let us know the bank so we can adjust.",
         );
         return;
       }
+
+      const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const filesLabel = files.length === 1 ? files[0].name : `${files.length} files`;
+      const skippedNote = failedFiles.length > 0
+        ? `\n\n${failedFiles.length} file(s) had no readable transactions: ${failedFiles.join(', ')}`
+        : '';
 
       const importAll = async (withAI: boolean) => {
         setImporting(true);
         try {
           if (withAI) {
-            for (const p of parsed) {
+            for (const p of allParsed) {
               try {
                 const result = await categorizeTransactionAI(p.description, p.shop, p.amount, categories);
                 if (result) p.category = result.category;
@@ -227,8 +252,12 @@ export default function AddTransactionScreen() {
               }
             }
           }
-          for (const p of parsed) {
-            await insertTransaction({ ...p, subcategory: null, notes: null, source: 'statement' });
+          for (const p of allParsed) {
+            const { import_filename, ...rest } = p;
+            await insertTransaction({
+              ...rest, subcategory: null, notes: null, source: 'statement',
+              import_batch: batchId, import_filename,
+            });
           }
           navigation.goBack();
         } finally {
@@ -238,8 +267,8 @@ export default function AddTransactionScreen() {
 
       const hasKey = !!(await getApiKey());
       confirmAlert(
-        `Import ${parsed.length} transactions?`,
-        `Found ${parsed.length} transactions in the file.` +
+        `Import ${allParsed.length} transactions from ${filesLabel}?`,
+        `Found ${allParsed.length} transactions.` + skippedNote +
           (hasKey ? '' : '\n\nTip: add an Anthropic API key in Settings for more accurate AI categorization.'),
         [
           { text: 'Cancel', style: 'cancel' },
@@ -271,7 +300,7 @@ export default function AddTransactionScreen() {
           <Text style={styles.sourceBtnText}>Import Statement</Text>
         </TouchableOpacity>
       </View>
-      <Text style={styles.importHint}>Accepts PDF or CSV bank statements</Text>
+      <Text style={styles.importHint}>Accepts PDF or CSV bank statements — select multiple at once</Text>
 
       <View style={styles.dividerRow}>
         <View style={styles.dividerLine} />

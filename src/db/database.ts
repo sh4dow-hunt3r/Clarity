@@ -16,16 +16,18 @@ async function initSchema(db: SQLite.SQLiteDatabase) {
     PRAGMA journal_mode = WAL;
 
     CREATE TABLE IF NOT EXISTS transactions (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      date        TEXT NOT NULL,
-      amount      REAL NOT NULL,
-      description TEXT NOT NULL,
-      category    TEXT NOT NULL,
-      subcategory TEXT,
-      shop        TEXT,
-      source      TEXT NOT NULL DEFAULT 'manual',
-      notes       TEXT,
-      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      date            TEXT NOT NULL,
+      amount          REAL NOT NULL,
+      description     TEXT NOT NULL,
+      category        TEXT NOT NULL,
+      subcategory     TEXT,
+      shop            TEXT,
+      source          TEXT NOT NULL DEFAULT 'manual',
+      notes           TEXT,
+      import_batch    TEXT,
+      import_filename TEXT,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS food_items (
@@ -56,6 +58,18 @@ async function initSchema(db: SQLite.SQLiteDatabase) {
     CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
     CREATE INDEX IF NOT EXISTS idx_food_items_txn        ON food_items(transaction_id);
   `);
+
+  // Migration: existing installs created the transactions table before
+  // import_batch/import_filename existed, and CREATE TABLE IF NOT EXISTS
+  // won't retroactively add columns to it.
+  const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(transactions)');
+  const columnNames = new Set(columns.map(c => c.name));
+  if (!columnNames.has('import_batch')) {
+    await db.execAsync('ALTER TABLE transactions ADD COLUMN import_batch TEXT');
+  }
+  if (!columnNames.has('import_filename')) {
+    await db.execAsync('ALTER TABLE transactions ADD COLUMN import_filename TEXT');
+  }
 }
 
 // ── Transactions ──────────────────────────────────────────────────────────────
@@ -65,10 +79,11 @@ export async function insertTransaction(
 ): Promise<number> {
   const db = await getDb();
   const result = await db.runAsync(
-    `INSERT INTO transactions (date, amount, description, category, subcategory, shop, source, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO transactions (date, amount, description, category, subcategory, shop, source, notes, import_batch, import_filename)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     t.date, t.amount, t.description, t.category,
     t.subcategory ?? null, t.shop ?? null, t.source, t.notes ?? null,
+    t.import_batch ?? null, t.import_filename ?? null,
   );
   return result.lastInsertRowId;
 }
@@ -86,6 +101,22 @@ export async function updateTransaction(t: Transaction): Promise<void> {
 export async function deleteTransaction(id: number): Promise<void> {
   const db = await getDb();
   await db.runAsync('DELETE FROM transactions WHERE id=?', id);
+}
+
+// Deletes every transaction in a given month (or, if month is omitted, the
+// entire year) — used for bulk-clearing a period from the Transactions screen.
+export async function deleteTransactionsByPeriod(year: number, month?: number): Promise<number> {
+  const db = await getDb();
+  const prefix = month ? `${year}-${String(month).padStart(2, '0')}` : `${year}`;
+  const ids = await db.getAllAsync<{ id: number }>('SELECT id FROM transactions WHERE date LIKE ?', `${prefix}%`);
+  if (ids.length === 0) return 0;
+  const idList = ids.map(r => r.id);
+  await db.runAsync(
+    `DELETE FROM food_items WHERE transaction_id IN (${idList.map(() => '?').join(',')})`,
+    ...idList,
+  );
+  await db.runAsync('DELETE FROM transactions WHERE date LIKE ?', `${prefix}%`);
+  return ids.length;
 }
 
 export async function getTransactions(filters?: {
@@ -225,4 +256,37 @@ export async function ignoreSubscription(key: string): Promise<void> {
 export async function unignoreSubscription(key: string): Promise<void> {
   const db = await getDb();
   await db.runAsync('DELETE FROM ignored_subscriptions WHERE subscription_key = ?', key);
+}
+
+// ── Import batches ─────────────────────────────────────────────────────────────
+
+export interface ImportBatch {
+  batch: string;
+  filename: string | null;
+  count: number;
+  total: number;
+  importedAt: string;
+}
+
+export async function getImportBatches(): Promise<ImportBatch[]> {
+  const db = await getDb();
+  return db.getAllAsync<ImportBatch>(
+    `SELECT import_batch as batch, import_filename as filename,
+            COUNT(*) as count, SUM(amount) as total, MAX(created_at) as importedAt
+     FROM transactions
+     WHERE import_batch IS NOT NULL
+     GROUP BY import_batch
+     ORDER BY importedAt DESC`,
+  );
+}
+
+export async function deleteImportBatch(batch: string): Promise<void> {
+  const db = await getDb();
+  // food_items has ON DELETE CASCADE, but that only fires with foreign_keys
+  // pragma on — delete explicitly first so orphaned rows can't linger.
+  await db.runAsync(
+    `DELETE FROM food_items WHERE transaction_id IN (SELECT id FROM transactions WHERE import_batch = ?)`,
+    batch,
+  );
+  await db.runAsync('DELETE FROM transactions WHERE import_batch = ?', batch);
 }

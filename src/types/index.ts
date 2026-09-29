@@ -29,6 +29,8 @@ export interface Transaction {
   shop: string | null;
   source: 'manual' | 'scan' | 'statement';
   notes: string | null;
+  import_batch?: string | null;
+  import_filename?: string | null;
 }
 
 export interface MonthlySummary {

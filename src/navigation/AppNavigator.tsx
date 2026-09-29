@@ -9,6 +9,7 @@ import AddTransactionScreen from '../screens/AddTransactionScreen';
 import ExportScreen from '../screens/ExportScreen';
 import SubscriptionsScreen from '../screens/SubscriptionsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import ImportBatchesScreen from '../screens/ImportBatchesScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -33,6 +34,25 @@ function TransactionsStack() {
         options={({ route }: any) => ({
           title: route.params?.transaction ? 'Edit Transaction' : 'Add Transaction',
         })}
+      />
+    </Stack.Navigator>
+  );
+}
+
+function ExportStack() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: '#fff' },
+        headerTintColor: '#1976D2',
+        headerTitleStyle: { fontWeight: '700' },
+      }}
+    >
+      <Stack.Screen name="ExportHome" component={ExportScreen} options={{ title: 'Export' }} />
+      <Stack.Screen
+        name="ImportBatches"
+        component={ImportBatchesScreen}
+        options={{ title: 'Imported Statements' }}
       />
     </Stack.Navigator>
   );
@@ -95,8 +115,8 @@ export default function AppNavigator() {
         />
         <Tab.Screen
           name="Export"
-          component={ExportScreen}
-          options={{ title: 'Export' }}
+          component={ExportStack}
+          options={{ title: 'Export', headerShown: false }}
         />
         <Tab.Screen
           name="Settings"

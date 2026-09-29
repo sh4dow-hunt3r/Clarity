@@ -4,6 +4,7 @@ import {
   ScrollView, ActivityIndicator,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { exportTransactionsCsv, exportMonthlySummaryCsv } from '../utils/exportData';
 import { showAlert } from '../utils/alert';
 
@@ -12,6 +13,7 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun',
 const now = new Date();
 
 export default function ExportScreen() {
+  const navigation = useNavigation<any>();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -101,6 +103,18 @@ export default function ExportScreen() {
               </>}
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity
+        style={styles.manageCard}
+        onPress={() => navigation.navigate('ImportBatches')}
+      >
+        <MaterialCommunityIcons name="file-import-outline" size={28} color="#7B1FA2" />
+        <View style={{ flex: 1, marginLeft: 14 }}>
+          <Text style={styles.manageTitle}>Manage Imported Statements</Text>
+          <Text style={styles.manageDesc}>View and undo past statement imports</Text>
+        </View>
+        <MaterialCommunityIcons name="chevron-right" size={22} color="#bbb" />
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -130,4 +144,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24, paddingVertical: 12,
   },
   exportBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  manageCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff', borderRadius: 16,
+    padding: 18, marginBottom: 24,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08, shadowRadius: 4, elevation: 2,
+  },
+  manageTitle: { fontSize: 15, fontWeight: '700', color: '#212121' },
+  manageDesc: { fontSize: 12, color: '#888', marginTop: 2 },
 });
