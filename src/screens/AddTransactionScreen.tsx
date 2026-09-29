@@ -25,6 +25,8 @@ import { pickFileWeb, readFileAsText, readFileAsBase64 } from '../utils/webFileP
 // browser engine), via PdfTextExtractorWebView below.
 import PdfTextExtractorWebView, { PdfTextExtractorHandle } from '../components/PdfTextExtractorWebView';
 import { useCategories } from '../hooks/useCategories';
+import { getApiKey } from '../utils/aiSettings';
+import { categorizeTransactionAI } from '../utils/aiService';
 
 const FOOD_SUBCATS: { key: FoodSubcategory; label: string }[] = [
   { key: 'fruits', label: 'Fruits' },
@@ -209,19 +211,40 @@ export default function AddTransactionScreen() {
         );
         return;
       }
+
+      const importAll = async (withAI: boolean) => {
+        setImporting(true);
+        try {
+          if (withAI) {
+            for (const p of parsed) {
+              try {
+                const result = await categorizeTransactionAI(p.description, p.shop, p.amount, categories);
+                if (result) p.category = result.category;
+              } catch {
+                // If a single AI call fails (rate limit, network blip), keep the
+                // keyword-based guess for that transaction rather than aborting
+                // the whole import.
+              }
+            }
+          }
+          for (const p of parsed) {
+            await insertTransaction({ ...p, subcategory: null, notes: null, source: 'statement' });
+          }
+          navigation.goBack();
+        } finally {
+          setImporting(false);
+        }
+      };
+
+      const hasKey = !!(await getApiKey());
       confirmAlert(
         `Import ${parsed.length} transactions?`,
-        `Found ${parsed.length} transactions in the file.`,
+        `Found ${parsed.length} transactions in the file.` +
+          (hasKey ? '' : '\n\nTip: add an Anthropic API key in Settings for more accurate AI categorization.'),
         [
           { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Import', onPress: async () => {
-              for (const p of parsed) {
-                await insertTransaction({ ...p, subcategory: null, notes: null, source: 'statement' });
-              }
-              navigation.goBack();
-            },
-          },
+          ...(hasKey ? [{ text: 'Import with AI', onPress: () => importAll(true) }] : []),
+          { text: hasKey ? 'Import as-is' : 'Import', onPress: () => importAll(false) },
         ],
       );
     } catch (e: any) {

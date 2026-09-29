@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, Dimensions, RefreshControl,
+  StyleSheet, Dimensions, RefreshControl, ActivityIndicator,
 } from 'react-native';
 import { PieChart, BarChart } from 'react-native-chart-kit';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getMonthlySummary, getAvailableMonths } from '../db/database';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCategories } from '../hooks/useCategories';
+import { getApiKey } from '../utils/aiSettings';
+import { generateSpendingInsights } from '../utils/aiService';
 
 const { width } = Dimensions.get('window');
 const CHART_WIDTH = width - 32;
@@ -23,6 +25,10 @@ export default function DashboardScreen() {
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof getMonthlySummary>> | null>(null);
   const [months, setMonths] = useState<{ year: number; month: number }[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [insights, setInsights] = useState<string | null>(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState<string | null>(null);
   const { categories, getCategory } = useCategories();
 
   const load = useCallback(async () => {
@@ -35,8 +41,35 @@ export default function DashboardScreen() {
   }, [selectedYear, selectedMonth]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    getApiKey().then(key => setHasApiKey(!!key));
+  }, []));
+
+  useEffect(() => { setInsights(null); setInsightsError(null); }, [selectedYear, selectedMonth]);
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  const fetchInsights = async () => {
+    if (!summary) return;
+    setInsightsLoading(true);
+    setInsightsError(null);
+    try {
+      const byCategoryLabels: Record<string, number> = {};
+      for (const [cat, amt] of Object.entries(summary.by_category)) {
+        byCategoryLabels[getCategory(cat).label] = amt;
+      }
+      const text = await generateSpendingInsights(
+        `${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}`,
+        byCategoryLabels,
+        summary.total,
+      );
+      setInsights(text);
+    } catch (e: any) {
+      setInsightsError(e?.message ?? 'Could not generate insights.');
+    } finally {
+      setInsightsLoading(false);
+    }
+  };
 
   const goToCategory = (categoryKey: string) => {
     navigation.navigate('Transactions', {
@@ -122,6 +155,51 @@ export default function DashboardScreen() {
           />
         </View>
       )}
+
+      {/* AI insights */}
+      <View style={styles.card}>
+        <View style={styles.aiHeaderRow}>
+          <MaterialCommunityIcons name="robot-outline" size={18} color="#7B1FA2" />
+          <Text style={[styles.cardTitle, { marginBottom: 0 }]}>AI Insights</Text>
+        </View>
+
+        {!hasApiKey ? (
+          <TouchableOpacity onPress={() => navigation.navigate('Settings')}>
+            <Text style={styles.aiPrompt}>
+              Add an Anthropic API key in Settings to get AI-generated observations about your spending.
+            </Text>
+          </TouchableOpacity>
+        ) : insightsLoading ? (
+          <View style={styles.aiLoadingRow}>
+            <ActivityIndicator size="small" color="#7B1FA2" />
+            <Text style={styles.aiPrompt}>Thinking…</Text>
+          </View>
+        ) : insightsError ? (
+          <>
+            <Text style={styles.aiError}>{insightsError}</Text>
+            <TouchableOpacity style={styles.aiBtn} onPress={fetchInsights}>
+              <Text style={styles.aiBtnText}>Try Again</Text>
+            </TouchableOpacity>
+          </>
+        ) : insights ? (
+          <>
+            <Text style={styles.aiInsightText}>{insights}</Text>
+            <TouchableOpacity style={styles.aiBtnOutline} onPress={fetchInsights}>
+              <Text style={styles.aiBtnOutlineText}>Regenerate</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={styles.aiBtn}
+            onPress={fetchInsights}
+            disabled={!summary || summary.total === 0}
+          >
+            <Text style={styles.aiBtnText}>
+              {!summary || summary.total === 0 ? 'No spending this month yet' : 'Get Insights'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
       {/* Top categories breakdown */}
       <View style={styles.card}>
@@ -215,6 +293,21 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 16, fontWeight: '700', color: '#212121', marginBottom: 12 },
   emptyText: { color: '#999', textAlign: 'center', paddingVertical: 16 },
+  aiHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+  aiPrompt: { fontSize: 13, color: '#888', lineHeight: 19 },
+  aiLoadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  aiError: { fontSize: 13, color: '#E53935', marginBottom: 10 },
+  aiInsightText: { fontSize: 14, color: '#333', lineHeight: 21, marginBottom: 12 },
+  aiBtn: {
+    backgroundColor: '#7B1FA2', borderRadius: 10,
+    paddingVertical: 11, alignItems: 'center',
+  },
+  aiBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  aiBtnOutline: {
+    borderWidth: 1, borderColor: '#7B1FA2', borderRadius: 10,
+    paddingVertical: 10, alignItems: 'center',
+  },
+  aiBtnOutlineText: { color: '#7B1FA2', fontWeight: '700', fontSize: 13 },
   categoryRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#eee',

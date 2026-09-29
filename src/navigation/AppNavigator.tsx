@@ -7,6 +7,8 @@ import DashboardScreen from '../screens/DashboardScreen';
 import TransactionsScreen from '../screens/TransactionsScreen';
 import AddTransactionScreen from '../screens/AddTransactionScreen';
 import ExportScreen from '../screens/ExportScreen';
+import SubscriptionsScreen from '../screens/SubscriptionsScreen';
+import SettingsScreen from '../screens/SettingsScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -62,7 +64,9 @@ export default function AppNavigator() {
             const icons: Record<string, string> = {
               Dashboard: 'view-dashboard',
               Transactions: 'receipt',
+              Subscriptions: 'calendar-sync',
               Export: 'export',
+              Settings: 'cog',
             };
             return (
               <MaterialCommunityIcons
@@ -85,9 +89,19 @@ export default function AppNavigator() {
           options={{ headerShown: false }}
         />
         <Tab.Screen
+          name="Subscriptions"
+          component={SubscriptionsScreen}
+          options={{ title: 'Subscriptions' }}
+        />
+        <Tab.Screen
           name="Export"
           component={ExportScreen}
           options={{ title: 'Export' }}
+        />
+        <Tab.Screen
+          name="Settings"
+          component={SettingsScreen}
+          options={{ title: 'Settings' }}
         />
       </Tab.Navigator>
     </NavigationContainer>

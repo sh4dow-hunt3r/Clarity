@@ -48,6 +48,10 @@ async function initSchema(db: SQLite.SQLiteDatabase) {
       color  TEXT NOT NULL DEFAULT '#607D8B'
     );
 
+    CREATE TABLE IF NOT EXISTS ignored_subscriptions (
+      subscription_key TEXT PRIMARY KEY
+    );
+
     CREATE INDEX IF NOT EXISTS idx_transactions_date     ON transactions(date);
     CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
     CREATE INDEX IF NOT EXISTS idx_food_items_txn        ON food_items(transaction_id);
@@ -198,4 +202,27 @@ export async function insertCustomCategory(label: string, icon: string, color: s
     key, label.trim(), icon, color,
   );
   return { key, label: label.trim(), icon, color, isCustom: true };
+}
+
+// ── Ignored subscriptions ──────────────────────────────────────────────────────
+
+export async function getIgnoredSubscriptionKeys(): Promise<Set<string>> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ subscription_key: string }>(
+    'SELECT subscription_key FROM ignored_subscriptions',
+  );
+  return new Set(rows.map(r => r.subscription_key));
+}
+
+export async function ignoreSubscription(key: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'INSERT OR IGNORE INTO ignored_subscriptions (subscription_key) VALUES (?)',
+    key,
+  );
+}
+
+export async function unignoreSubscription(key: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM ignored_subscriptions WHERE subscription_key = ?', key);
 }
